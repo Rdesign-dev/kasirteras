@@ -239,12 +239,12 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
             <div class="bg-white p-4 rounded shadow">
                 <h2 class="text-center mb-4 text-red-600">Transaksi</h2>
                 <?php if ($searchResult): ?>
-                    <form method="POST" class="flex flex-col gap-2" name="transaction">
+                    <form id="transactionForm" method="POST" class="flex flex-col gap-2" onsubmit="return false;">
                         <input type="hidden" name="user_id" value="<?php echo $searchResult['id']; ?>">
                         <input type="number" name="amount" 
                                placeholder="Masukkan nominal" 
                                class="p-2 border rounded" required>
-                        <button type="submit" name="transaction"
+                        <button type="button" onclick="showTransactionModal()"
                                 class="bg-red-500 p-2 rounded text-white">Submit</button>
                     </form>
                 <?php else: ?>
@@ -286,7 +286,7 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
                                     </p>
                                 </div>
                             </div>
-                            <button onclick="useVoucher(<?php echo $voucher['redeem_id']; ?>)" 
+                            <button onclick="useVoucher(<?php echo $voucher['redeem_id']; ?>, this)" 
                                     class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
                                 Gunakan
                             </button>
@@ -320,6 +320,26 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
                 <button type="button" onclick="submitPayment('transferBank')" 
                         class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Transfer Bank</button>
                 <button type="button" onclick="hidePaymentModal()" 
+                        class="bg-gray-500 text-white p-2 rounded hover:bg-gray-600">Batal</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Transaction Payment Method Modal -->
+    <div id="transactionModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+        <div class="bg-white p-6 rounded-lg">
+            <h3 class="text-lg font-bold mb-4">Pilih Metode Pembayaran</h3>
+            <form id="transactionPaymentForm" method="POST" class="flex flex-col gap-4">
+                <input type="hidden" name="user_id" id="trans_user_id">
+                <input type="hidden" name="amount" id="trans_amount">
+                <input type="hidden" name="payment_method" id="trans_payment_method">
+                <button type="button" onclick="submitTransaction('Balance')" 
+                        class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Saldo</button>
+                <button type="button" onclick="submitTransaction('cash')" 
+                        class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Cash</button>
+                <button type="button" onclick="submitTransaction('transferBank')" 
+                        class="bg-yellow-500 text-white p-2 rounded hover:bg-yellow-600">Transfer Bank</button>
+                <button type="button" onclick="hideTransactionModal()" 
                         class="bg-gray-500 text-white p-2 rounded hover:bg-gray-600">Batal</button>
             </form>
         </div>
@@ -418,20 +438,38 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
         }
     }
 
-    async function submitTransaction(event) {
-        event.preventDefault();
+    function showTransactionModal() {
+        const form = document.getElementById('transactionForm');
+        const userId = form.querySelector('[name="user_id"]').value;
+        const amount = form.querySelector('[name="amount"]').value;
+        
+        if (!amount || amount <= 0) {
+            alert('Silakan masukkan nominal yang valid');
+            return;
+        }
+        
+        document.getElementById('trans_user_id').value = userId;
+        document.getElementById('trans_amount').value = amount;
+        document.getElementById('transactionModal').classList.remove('hidden');
+    }
+
+    function hideTransactionModal() {
+        document.getElementById('transactionModal').classList.add('hidden');
+    }
+
+    async function submitTransaction(paymentMethod) {
         if (isProcessing) return;
         isProcessing = true;
         
         try {
-            const form = document.querySelector('form[name="transaction"]');
-            const user_id = document.querySelector('form[name="transaction"] [name="user_id"]').value;
-            const amount = document.querySelector('form[name="transaction"] [name="amount"]').value;
-        
+            const userId = document.getElementById('trans_user_id').value;
+            const amount = document.getElementById('trans_amount').value;
+            
             const formData = new FormData();
             formData.append('transaction', 'true');
+            formData.append('payment_method', paymentMethod);
+            formData.append('user_id', userId);
             formData.append('amount', amount);
-            formData.append('user_id', user_id);
 
             const response = await fetch('process_transaction.php', {
                 method: 'POST',
@@ -441,9 +479,10 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
             const result = await response.json();
         
             if (result.success) {
+                hideTransactionModal();
                 showSuccessModal(result.message);
-                await updateUserInfo(formData.get('user_id'));
-                form.reset();
+                await updateUserInfo(userId);
+                document.getElementById('transactionForm').reset();
             } else {
                 throw new Error(result.message || 'Terjadi kesalahan');
             }
@@ -454,7 +493,7 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
         }
     }
 
-    async function useVoucher(redeemId) {
+    async function useVoucher(redeemId, element) {
         if (isProcessing) return;
         isProcessing = true;
         
@@ -470,12 +509,25 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
             const result = await response.json();
             
             if (result.success) {
-                showSuccessModal(result.message);
-                // Remove the voucher element from DOM
-                const voucherElement = event.target.closest('.flex.items-center.justify-between');
-                if (voucherElement) {
-                    voucherElement.remove();
+                // Find and remove the voucher element
+                const voucherCard = element.closest('.flex.items-center.justify-between');
+                if (voucherCard) {
+                    voucherCard.remove();
                 }
+                
+                // Check if there are any vouchers left
+                const voucherContainer = document.querySelector('.bg-white.p-4.rounded.shadow.col-span-1.md\\:col-span-2');
+                const remainingVouchers = voucherContainer.querySelectorAll('.flex.items-center.justify-between');
+                
+                // If no vouchers left, show "no vouchers" message
+                if (remainingVouchers.length === 0) {
+                    const noVouchersMsg = document.createElement('p');
+                    noVouchersMsg.className = 'text-center text-gray-500';
+                    noVouchersMsg.textContent = 'Tidak ada voucher yang tersedia';
+                    voucherContainer.appendChild(noVouchersMsg);
+                }
+                
+                showSuccessModal(result.message);
             } else {
                 throw new Error(result.message || 'Terjadi kesalahan');
             }
