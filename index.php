@@ -255,18 +255,55 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
             <!-- Redeem Voucher -->
             <div class="bg-white p-4 rounded shadow col-span-1 md:col-span-2">
                 <h2 class="text-center mb-4 text-green-600">Redeem Voucher</h2>
-                <div class="flex items-center justify-between border border-gray-300 p-2 rounded">
-            <div class="flex items-center space-x-4">
-                <img alt="Voucher Image" class="w-16 h-16 rounded" height="100" src="https://storage.googleapis.com/a1aa/image/FH4HBatpmNcVIsG-Dw-ELgZQG-ENO7SkKCzL15YzrB4.jpg" width="100"/>
-                <div>
-                    <p class="font-bold">Voucher Name</p>
-                    <p class="text-sm text-gray-600">Masa Berlaku: 01/01/2024</p>
-                </div>
+                <?php if ($searchResult): ?>
+                    <?php
+                    // Fetch available vouchers for the user
+                    $voucherStmt = $pdo->prepare("
+                        SELECT rv.*, r.title 
+                        FROM redeem_voucher rv
+                        JOIN rewards r ON rv.reward_id = r.id
+                        WHERE rv.user_id = ? 
+                        AND rv.status = 'Available'
+                        AND rv.expires_at > NOW()
+                        ORDER BY rv.expires_at ASC
+                    ");
+                    $voucherStmt->execute([$searchResult['id']]);
+                    $vouchers = $voucherStmt->fetchAll(PDO::FETCH_ASSOC);
+                    
+                    if ($vouchers): 
+                        foreach ($vouchers as $voucher):
+                    ?>
+                        <div class="flex items-center justify-between border border-gray-300 p-2 rounded mb-2">
+                            <div class="flex items-center space-x-4">
+                                <img alt="Voucher Image" class="w-16 h-16 rounded" height="100" 
+                                     src="https://storage.googleapis.com/a1aa/image/FH4HBatpmNcVIsG-Dw-ELgZQG-ENO7SkKCzL15YzrB4.jpg" 
+                                     width="100"/>
+                                <div>
+                                    <p class="font-bold"><?php echo htmlspecialchars($voucher['title']); ?></p>
+                                    <p class="text-sm text-gray-600">Kode: <?php echo htmlspecialchars($voucher['kode_voucher']); ?></p>
+                                    <p class="text-sm text-gray-600">
+                                        Masa Berlaku: <?php echo date('d/m/Y', strtotime($voucher['expires_at'])); ?>
+                                    </p>
+                                </div>
+                            </div>
+                            <button onclick="useVoucher(<?php echo $voucher['redeem_id']; ?>)" 
+                                    class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                                Gunakan
+                            </button>
+                        </div>
+                    <?php 
+                        endforeach;
+                    else:
+                    ?>
+                        <p class="text-center text-gray-500">Tidak ada voucher yang tersedia</p>
+                    <?php 
+                    endif;
+                    ?>
+                <?php else: ?>
+                    <p class="text-center text-gray-500">Silakan cari member terlebih dahulu</p>
+                <?php endif; ?>
             </div>
-            <button class="bg-green-600 text-white px-4 py-2 rounded">Redeem</button>
-        </div>
 
-            </div>
         </div>
     </div>
 
@@ -407,6 +444,38 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
                 showSuccessModal(result.message);
                 await updateUserInfo(formData.get('user_id'));
                 form.reset();
+            } else {
+                throw new Error(result.message || 'Terjadi kesalahan');
+            }
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            isProcessing = false;
+        }
+    }
+
+    async function useVoucher(redeemId) {
+        if (isProcessing) return;
+        isProcessing = true;
+        
+        try {
+            const response = await fetch('use_voucher.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `redeem_id=${redeemId}`
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showSuccessModal(result.message);
+                // Remove the voucher element from DOM
+                const voucherElement = event.target.closest('.flex.items-center.justify-between');
+                if (voucherElement) {
+                    voucherElement.remove();
+                }
             } else {
                 throw new Error(result.message || 'Terjadi kesalahan');
             }
