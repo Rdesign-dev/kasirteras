@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth_check.php';
 require_once 'config/database.php';
+require_once 'includes/helpers.php';
 
 header('Content-Type: application/json');
 
@@ -9,20 +10,25 @@ try {
         throw new Exception('Missing required fields');
     }
     
-    // Validate payment method
-    if (!in_array($_POST['payment_method'], ['cash', 'transferBank'])) {
-        throw new Exception('Metode pembayaran tidak valid: ' . $_POST['payment_method']);
-    }
-    
     $pdo->beginTransaction();
+    
+    // Generate transaction code
+    $transactionCode = generateTransactionCode(
+        $_SESSION['branch_id'],
+        $_SESSION['branch_code'],
+        $_SESSION['user_id'],
+        'Balance Top-up',
+        $_POST['payment_method']
+    );
     
     // Update user balance
     $updateStmt = $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?");
     $updateStmt->execute([$_POST['amount'], $_POST['user_id']]);
 
-    // Record transaction
+    // Record transaction with code
     $insertStmt = $pdo->prepare("
         INSERT INTO transactions (
+            transaction_codes,
             user_id, 
             transaction_type, 
             amount, 
@@ -30,10 +36,11 @@ try {
             account_cashier_id,
             payment_method,
             created_at
-        ) VALUES (?, 'Balance Top-up', ?, ?, ?, ?, NOW())
+        ) VALUES (?, ?, 'Balance Top-up', ?, ?, ?, ?, NOW())
     ");
     
     $insertStmt->execute([
+        $transactionCode,
         $_POST['user_id'],
         $_POST['amount'],
         $_SESSION['branch_id'],
@@ -46,7 +53,8 @@ try {
     echo json_encode([
         'success' => true,
         'message' => 'Top-up berhasil dengan metode ' . 
-                    ($_POST['payment_method'] === 'cash' ? 'Tunai' : 'Transfer Bank')
+                    ($_POST['payment_method'] === 'cash' ? 'Tunai' : 'Transfer Bank'),
+        'transaction_code' => $transactionCode
     ]);
     
 } catch (Exception $e) {

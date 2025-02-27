@@ -1,80 +1,96 @@
 <?php
 require_once 'includes/auth_check.php';
 require_once 'config/database.php';
+require_once 'includes/helpers.php';
 
-// Add session debugging
-if (!isset($_SESSION['branch_id'])) {
-    error_log('Session data: ' . print_r($_SESSION, true));
-    header('Location: auth.php');
-    exit;
-}
+$searchResult = null;  // Initialize searchResult variable
 
-// Verify branch_id exists in database
-$branchCheck = $pdo->prepare("SELECT id FROM branch WHERE id = ?");
-$branchCheck->execute([$_SESSION['branch_id']]);
-if (!$branchCheck->fetch()) {
-    error_log('Invalid branch_id: ' . $_SESSION['branch_id']);
-    session_destroy();
-    header('Location: auth.php');
-    exit;
-}
+// For the "Missing required fields" error, modify the top-up condition check
+try {
+    // Only process if topup is set in POST
+    if (isset($_POST['topup'])) {
+        if (!isset($_POST['amount'], $_POST['payment_method'], $_POST['user_id'])) {
+            throw new Exception('Missing required fields');
+        }
 
-$searchResult = null;
-$error = '';
-$success = '';
+        // Verify branch_id exists in database
+        $branchCheck = $pdo->prepare("SELECT id FROM branch WHERE id = ?");
+        $branchCheck->execute([$_SESSION['branch_id']]);
 
-// Handle Top-up
-if (isset($_POST['topup']) && isset($_POST['amount']) && isset($_POST['payment_method'])) {
-    try {
-        if (!isset($_SESSION['branch_id'])) {
+        if (!$branchCheck->fetch()) {
             throw new Exception('Branch ID tidak ditemukan');
         }
-        
-        // Validate payment method
-        if (!in_array($_POST['payment_method'], ['cash', 'transferBank'])) { // Changed 'transfer' to 'transferBank'
-            throw new Exception('Metode pembayaran tidak valid');
-        }
-        
-        // Validate amount
-        if (!is_numeric($_POST['amount']) || $_POST['amount'] <= 0) {
-            throw new Exception('Nominal tidak valid');
-        }
-        
-        $pdo->beginTransaction();
-        
-        // Update user balance
-        $updateStmt = $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?");
-        $updateStmt->execute([$_POST['amount'], $_POST['user_id']]);
 
-        // Record transaction
-        $insertStmt = $pdo->prepare("
-            INSERT INTO transactions (
-                user_id, 
-                transaction_type, 
-                amount, 
-                branch_id, 
-                account_cashier_id,
-                payment_method,
-                created_at
-            ) VALUES (?, 'Balance Top-up', ?, ?, ?, ?, NOW())
-        ");
-        
-        $insertStmt->execute([
-            $_POST['user_id'],
-            $_POST['amount'],
-            $_SESSION['branch_id'],
-            $_SESSION['user_id'],
-            $_POST['payment_method']
-        ]);
+        try {
+            $pdo->beginTransaction();
 
-        $pdo->commit();
-        $success = 'Top-up berhasil dengan metode ' . 
-                  ($_POST['payment_method'] === 'cash' ? 'Tunai' : 'Transfer Bank');
-                  
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        $error = 'Terjadi kesalahan: ' . $e->getMessage();
+            // Generate transaction code
+            $transactionCode = generateTransactionCode(
+                $_SESSION['branch_id'],
+                $_SESSION['branch_code'],
+                $_SESSION['user_id'],
+                'Balance Top-up',
+                $_POST['payment_method']
+            );
+
+            // Validate payment method
+            if (!in_array($_POST['payment_method'], ['cash', 'transferBank'])) {
+                throw new Exception('Metode pembayaran tidak valid');
+            }
+
+            // Validate amount
+            if ($_POST['amount'] <= 0) {
+                throw new Exception('Nominal tidak valid');
+            }
+
+            // Update user balance
+            $updateStmt = $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?");
+            $updateStmt->execute([$_POST['amount'], $_POST['user_id']]);
+
+            // Record transaction
+            $insertStmt = $pdo->prepare("
+                INSERT INTO transactions (
+                    transaction_codes,
+                    user_id, 
+                    transaction_type,
+                    amount,
+                    branch_id,
+                    account_cashier_id,
+                    payment_method,
+                    created_at
+                ) VALUES (?, ?, 'Balance Top-up', ?, ?, ?, ?, NOW())
+            ");
+
+            $insertStmt->execute([
+                $transactionCode,
+                $_POST['user_id'],
+                $_POST['amount'],
+                $_SESSION['branch_id'],
+                $_SESSION['user_id'],
+                $_POST['payment_method']
+            ]);
+
+            $pdo->commit();
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'Top-up berhasil dengan metode ' . 
+                            ($_POST['payment_method'] === 'cash' ? 'Tunai' : 'Transfer Bank'),
+                'transaction_code' => $transactionCode
+            ]);
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+
     }
+} catch (Exception $e) {
+    echo json_encode([
+        'success' => false,
+        'message' => $e->getMessage()
+    ]);
 }
 
 // Handle Transaction (Payment)
@@ -119,11 +135,14 @@ if (isset($_POST['transaction']) && isset($_POST['amount'])) {
             throw new Exception('Saldo tidak mencukupi');
         }
     } catch (Exception $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $error = 'Terjadi kesalahan: ' . $e->getMessage();
     }
 }
 
+// Then modify the existing search code
 if (isset($_POST['search']) && !empty($_POST['member_number'])) {
     $stmt = $pdo->prepare("SELECT id, name, balance, phone_number, poin, level_id FROM users WHERE phone_number = ?");
     $stmt->execute([$_POST['member_number']]);
@@ -135,7 +154,14 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100">
-    <div class="max-w-4xl mx-auto p-4">
+    <button id="fullscreenBtn" 
+        class="fixed top-4 right-4 z-50 bg-blue-600 text-white p-2 rounded-full shadow-lg hover:bg-blue-700 focus:outline-none">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+              d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/>
+    </svg>
+</button>
+    <div class="max-w-7xl mx-auto p-2 sm:p-4 min-h-screen">
         <!-- Header -->
         <div class="flex justify-between items-center bg-blue-500 p-2 rounded">
             <div class="flex flex-col text-white">
@@ -171,10 +197,10 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
             <form method="POST" class="flex w-full">
                 <input type="text" name="member_number" 
                        placeholder="Masukkan Nomor Telepon" 
-                       class="flex-grow p-2 border rounded-l"
+                       class="flex-grow p-2 border rounded-l text-sm sm:text-base"
                        value="<?php echo isset($_POST['member_number']) ? htmlspecialchars($_POST['member_number']) : ''; ?>">
                 <button type="submit" name="search" 
-                        class="bg-yellow-500 p-2 rounded-r text-white hover:bg-yellow-600">
+                        class="bg-yellow-500 p-2 rounded-r text-white hover:bg-yellow-600 text-sm sm:text-base whitespace-nowrap">
                     Cari
                 </button>
                 <!-- Replace the existing clear button with this -->
@@ -314,7 +340,7 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
 
     <!-- Payment Method Modal -->
     <div id="paymentModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-        <div class="bg-white p-6 rounded-lg">
+        <div class="bg-white p-4 sm:p-6 rounded-lg w-11/12 sm:w-96 max-h-[90vh] overflow-y-auto">
             <h3 class="text-lg font-bold mb-4">Pilih Metode Pembayaran</h3>
             <form id="paymentForm" method="POST" class="flex flex-col gap-4">
                 <input type="hidden" name="user_id" id="modal_user_id">
@@ -612,6 +638,69 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
             voucherSection.appendChild(message);
         }
     }
+
+    // Add fullscreen functionality
+    function toggleFullScreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                alert(`Error attempting to enable fullscreen: ${err.message}`);
+            });
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
+        }
+    }
+
+    // Update fullscreen button icon based on state
+    function updateFullscreenButton() {
+        const btn = document.getElementById('fullscreenBtn');
+        if (!btn) return;
+
+        if (document.fullscreenElement) {
+            btn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            `;
+        } else {
+            btn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/>
+                </svg>
+            `;
+        }
+    }
+
+    // Add event listeners
+    document.addEventListener('DOMContentLoaded', function() {
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        if (fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', toggleFullScreen);
+        }
+
+        // Listen for fullscreen changes
+        document.addEventListener('fullscreenchange', updateFullscreenButton);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+        document.addEventListener('mozfullscreenchange', updateFullscreenButton);
+        document.addEventListener('MSFullscreenChange', updateFullscreenButton);
+    });
+
+    // Add responsive grid layout adjustments
+    window.addEventListener('resize', function() {
+        const grid = document.querySelector('.mt-4.grid');
+        if (grid) {
+            if (window.innerWidth < 768) {
+                grid.classList.remove('md:grid-cols-2');
+                grid.classList.add('grid-cols-1');
+            } else {
+                grid.classList.remove('grid-cols-1');
+                grid.classList.add('md:grid-cols-2');
+            }
+        }
+    });
     </script>
 </body>
 </html>
