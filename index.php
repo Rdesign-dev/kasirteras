@@ -177,6 +177,11 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
                         class="bg-yellow-500 p-2 rounded-r text-white hover:bg-yellow-600">
                     Cari
                 </button>
+                <!-- Replace the existing clear button with this -->
+                <button type="button" onclick="clearSearch()" 
+                        class="bg-gray-500 p-2 rounded text-white hover:bg-gray-600 ml-2">
+                    Clear
+                </button>
             </form>
         </div>
 
@@ -559,6 +564,54 @@ if (isset($_POST['search']) && !empty($_POST['member_number'])) {
     // Update form event listeners
     document.getElementById('topupForm').onsubmit = () => false;
     document.querySelector('form[name="transaction"]')?.addEventListener('submit', submitTransaction);
+
+    // Add this function to your existing <script> section
+    function clearSearch() {
+        // Clear the search input
+        document.querySelector('input[name="member_number"]').value = '';
+        
+        // Remove search results
+        const searchResults = document.querySelectorAll('.mt-4.bg-green-600, .mt-4.bg-red-600, .mt-2.bg-white');
+        searchResults.forEach(el => el.remove());
+        
+        // Reset forms and show "Silakan cari member" messages
+        const forms = document.querySelectorAll('#topupForm, #transactionForm');
+        forms.forEach(form => {
+            if (form) form.reset();
+        });
+        
+        // Show "Silakan cari member" messages
+        const actionDivs = document.querySelectorAll('.bg-white.p-4.rounded.shadow');
+        actionDivs.forEach(div => {
+            const message = document.createElement('p');
+            message.className = 'text-center text-gray-500';
+            message.textContent = 'Silakan cari member terlebih dahulu';
+            
+            // Clear existing content
+            div.innerHTML = '';
+            
+            // Add title back if it exists
+            const title = div.querySelector('h2');
+            if (title) {
+                div.appendChild(title);
+            }
+            
+            div.appendChild(message);
+        });
+        
+        // Remove voucher section content
+        const voucherSection = document.querySelector('.bg-white.p-4.rounded.shadow.col-span-1.md\\:col-span-2');
+        if (voucherSection) {
+            const title = voucherSection.querySelector('h2');
+            voucherSection.innerHTML = '';
+            if (title) voucherSection.appendChild(title);
+            
+            const message = document.createElement('p');
+            message.className = 'text-center text-gray-500';
+            message.textContent = 'Silakan cari member terlebih dahulu';
+            voucherSection.appendChild(message);
+        }
+    }
     </script>
 </body>
 </html>
